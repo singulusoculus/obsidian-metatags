@@ -1,0 +1,18 @@
+/*
+
+This CSS file will be included with your plugin, and
+available in the app when your plugin is enabled.
+
+If your plugin does not need CSS, delete this file.
+
+*/
+
+/* Style the parent element */
+
+/* You can add more specific styles for different MetaTags */
+/* Style for metadata properties controlled by a MetaTag */
+div.metadata-property[data-metatag] .metadata-property-icon,
+div.metadata-property[data-metatag] .metadata-property-key-input {
+	background-color: #f0f8ff;
+	border-left: 2px solid #1e90ff;
+}

@@ -1,0 +1,11 @@
+{
+	"id": "meta-tags",
+	"name": "MetaTags",
+	"version": "1.0.0",
+	"minAppVersion": "0.15.0",
+	"description": "A plugin to help users quickly add metadata fields to notes and keep them in sync.",
+	"author": "Brian Casey",
+	"authorUrl": "",
+	"fundingUrl": "",
+	"isDesktopOnly": false
+}
