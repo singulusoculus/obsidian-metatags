@@ -6,15 +6,20 @@ import {
 	TFile,
 	TFolder,
 	debounce,
+	MarkdownView,
+	TAbstractFile,
 } from "obsidian";
-import * as YAML from "js-yaml";
+import * as JSYAML from "js-yaml";
+import * as YAML from 'yaml';
 
 interface MetaTagsSettings {
 	tagBase: string;
+	deleteEmptyProperties: boolean;
 }
 
 const DEFAULT_SETTINGS: MetaTagsSettings = {
 	tagBase: "mt",
+	deleteEmptyProperties: false,
 };
 
 export default class MetaTagsPlugin extends Plugin {
@@ -46,12 +51,13 @@ export default class MetaTagsPlugin extends Plugin {
 		);
 
 		this.registerEvent(
-			this.app.workspace.on("file-open", (file) => {
-				if (file) {
-					this.applyMetaTagAttributes(file);
-				}
+			this.app.workspace.on('file-open', async (file: TFile) => {
+				if (file && file.extension === 'md') {
+				// await this.applyMetaTagAttributes(file);
+				await this.updateMetaTagAttributes(file)
+			  }
 			})
-		);
+		  );
 	}
 
 	onunload() {
@@ -110,6 +116,7 @@ export default class MetaTagsPlugin extends Plugin {
 	}
 
 	async onMetadataChanged(file: TFile) {
+		console.log('onMetadataChanged')
 		const isTemplate = await this.isTemplateFile(file);
 
 		if (isTemplate) {
@@ -137,6 +144,7 @@ export default class MetaTagsPlugin extends Plugin {
 			// Update the cache with current tags
 			this.fileTagCache.set(file.path, currentTags);
 		}
+		await this.updateMetaTagAttributes(file);
 	}
 
 	async isTemplateFile(file: TFile): Promise<boolean> {
@@ -166,21 +174,23 @@ export default class MetaTagsPlugin extends Plugin {
 
 		if (metaTagNames.length > 0) {
 			await this.applyTemplateMetadata(file, metaTagNames);
-			this.applyMetaTagAttributes(file);
+			this.refreshFileView(file);
 		}
 	}
 
 	async handleMetaTagRemoved(file: TFile, removedTags: string[]) {
 		for (const tag of removedTags) {
-			if (tag.startsWith(this.settings.tagBase)) {
+			if (tag.startsWith(`${this.settings.tagBase}/`)) {
 				const metaTagName = tag.replace(
 					`${this.settings.tagBase}/`,
 					""
 				);
-				await this.removeEmptyTemplateProperties(file, metaTagName);
-				this.removeMetaTagAttributes(file, metaTagName);
+				if (this.settings.deleteEmptyProperties) {
+					await this.removeEmptyTemplateProperties(file, metaTagName);
+				}
 			}
 		}
+		this.refreshFileView(file);
 	}
 
 	async handleTemplateMetadataChange(templateFile: TFile) {
@@ -325,39 +335,39 @@ export default class MetaTagsPlugin extends Plugin {
 
 		const content = await this.app.vault.read(file);
 		const newContent = this.replaceFrontMatter(content, mergedData);
-		console.log(newContent);
-		// return;
 
 		await this.app.vault.modify(file, newContent);
 	}
 
 	async removeEmptyTemplateProperties(file: TFile, metaTagName: string) {
-		return;
 		const noteData =
 			this.app.metadataCache.getFileCache(file)?.frontmatter || {};
-
+	
 		const content = await this.app.vault.read(file);
+	
+		// Get the template frontmatter
+		const templateFilePath = `${this.settings.tagBase}/${metaTagName}.md`;
+		const templateFile = this.app.vault.getAbstractFileByPath(templateFilePath) as TFile;
+		if (!templateFile) return;
+	
+		const templateContent = await this.app.vault.read(templateFile);
+		const templateData = this.extractFrontmatter(templateContent);
+	
+		// Create a copy of the note's frontmatter
 		const newData = { ...noteData };
-
+	
+		// Iterate over the note's frontmatter properties
 		for (const key in newData) {
-			if (newData[key] === "" || newData[key] === null) {
+			if ((newData[key] === "" || newData[key] === null) && templateData.hasOwnProperty(key)) {
+				// Remove the property if it's empty and exists in the template
 				delete newData[key];
 			}
 		}
-
+	
 		const newContent = this.replaceFrontMatter(content, newData);
 		await this.app.vault.modify(file, newContent);
 	}
 
-	applyMetaTagAttributes(file: TFile) {
-		// Since we cannot manipulate the editor's HTML directly from the plugin,
-		// this function would rely on a markdown post-processor or a custom code mirror mode.
-		// For simplicity, we will assume that the CSS targets the data attributes appropriately.
-	}
-
-	removeMetaTagAttributes(file: TFile, metaTagName: string) {
-		// Similar to applyMetaTagAttributes, this would adjust the rendering of the note.
-	}
 
 	replaceFrontMatter(content: string, newData: any): string {
 		const yamlStart = content.indexOf("---");
@@ -371,7 +381,7 @@ export default class MetaTagsPlugin extends Plugin {
 			restOfContent = content.trimStart();
 		}
 
-		const newYaml = YAML.dump(newData);
+		const newYaml = JSYAML.dump(newData);
 
 		return `---\n${newYaml}---\n\n${restOfContent}`;
 	}
@@ -405,6 +415,178 @@ export default class MetaTagsPlugin extends Plugin {
 
 		return tags;
 	}
+
+	getMetaTagNamesFromFrontmatter(frontmatter: any): string[] {
+		const tags = frontmatter.tags;
+		if (!tags) return [];
+
+		let tagList: string[] = [];
+
+		if (typeof tags === "string") {
+			tagList.push(tags);
+		} else if (Array.isArray(tags)) {
+			tagList = tags;
+		}
+
+		const metaTagNames = tagList
+			.map((tag) => (tag.startsWith("#") ? tag.substring(1) : tag))
+			.filter((tag) => tag.startsWith(`${this.settings.tagBase}/`))
+			.map((tag) => tag.replace(`${this.settings.tagBase}/`, ""));
+
+		return metaTagNames;
+	}
+
+	isMetaTag(tag: string): boolean {
+		return tag.startsWith(`${this.settings.tagBase}/`);
+	}
+
+	getMetaTagName(tag: string): string {
+		return tag.replace(`${this.settings.tagBase}/`, "");
+	}
+
+	getAllTagsFromFrontmatter(frontmatter: any): string[] {
+		if (!frontmatter || !frontmatter.tags) return [];
+
+		let tags: string[] = [];
+
+		if (typeof frontmatter.tags === "string") {
+			tags.push(frontmatter.tags);
+		} else if (Array.isArray(frontmatter.tags)) {
+			tags = frontmatter.tags;
+		}
+
+		// Remove '#' from tags if present
+		tags = tags.map((tag) =>
+			tag.startsWith("#") ? tag.substring(1) : tag
+		);
+
+		return tags;
+	}
+
+	refreshFileView(file: TFile) {
+		const leaves = this.app.workspace.getLeavesOfType("markdown");
+		for (const leaf of leaves) {
+			const view = leaf.view;
+			if (view instanceof MarkdownView && view.file?.path === file.path) {
+				// Reload the view to refresh the rendering
+				leaf.setViewState(leaf.getViewState(), { reload: true });
+			}
+		}
+	}
+
+	async applyMetaTagAttributes(file: TFile) {
+		const metadata = this.app.metadataCache.getFileCache(file);
+		const tags = metadata?.frontmatter?.tags;
+		if (!tags) return;
+	  
+		const metaTag = tags.find((tag: any) => tag.startsWith(`${this.settings.tagBase}/`));
+		if (!metaTag) return;
+	  
+		// Extract the template name from the tag
+		const templateName = metaTag.split('/')[1];
+		const templateFile = this.app.vault.getAbstractFileByPath(`${this.settings.tagBase}/${templateName}.md`);
+		if (!templateFile || !(templateFile instanceof TFile)) return;
+	  
+		// Get properties from the template
+		const templateContent = await this.app.vault.read(templateFile);
+		const templateProperties = this.extractFrontmatter(templateContent);
+	  
+		// Apply attributes to properties in the note
+		this.addMetaTagAttributesToProperties(file, templateProperties);
+	  }
+	  
+	  
+	  async updateMetaTagAttributes(file: TAbstractFile) {
+		  if (!(file instanceof TFile)) return; // Check if file is a TFile
+
+		  if(!this.isCurrentFile(file)) return; // Check if file is current file
+
+		  const isTemplate = await this.isTemplateFile(file);
+
+		  if (isTemplate) {
+			this.addMetaTagAttributesToTemplate(file);
+			return;
+		  }
+		
+		  const metadata = this.app.metadataCache.getFileCache(file);
+		  const tags = metadata?.frontmatter?.tags;
+		
+		  if (!tags) return;
+		
+		  const metaTag = tags.find((tag: any) => tag.startsWith(`${this.settings.tagBase}/`));
+		  const templateName = metaTag?.split('/')[1];
+		  const templateFile = this.app.vault.getAbstractFileByPath(`${this.settings.tagBase}/${templateName}.md`);
+		  
+		  if (templateFile && metaTag && templateFile instanceof TFile) { // Check if templateFile is a TFile
+			const templateContent = await this.app.vault.read(templateFile);
+			const templateProperties = this.extractFrontmatter(templateContent);
+			this.addMetaTagAttributesToProperties(file, templateProperties);
+		  } else {
+			this.removeMetaTagAttributesFromProperties(file);
+		  }
+		}
+
+		addMetaTagAttributesToTemplate(file: TFile) {
+			const view = this.app.workspace.getActiveViewOfType(MarkdownView);
+			if (!view) return;
+
+			const elements = view.containerEl.querySelectorAll('.metadata-property');
+			elements.forEach((el) => {
+				const propertyKeyEl = el.querySelector('.metadata-property-key')
+				propertyKeyEl?.setAttribute('data-metatag', 'true'); // Add attribute to the parent
+			});
+		}
+	  
+	  
+		addMetaTagAttributesToProperties(file: TFile, templateProperties: any) {
+		  const view = this.app.workspace.getActiveViewOfType(MarkdownView);
+		  if (!view) return;
+		
+		  // Select all parent elements that contain the child with aria-label
+		  const elements = view.containerEl.querySelectorAll('.metadata-property');
+		  elements.forEach((el) => {
+			  // Find the child element with the aria-label
+			const propertyName = el.getAttribute('data-property-key')?.trim();
+			const propertyKeyEl = el.querySelector('.metadata-property-key')
+
+			if (propertyName && templateProperties.hasOwnProperty(propertyName)) {
+			  propertyKeyEl?.setAttribute('data-metatag', 'true'); // Add attribute to the parent
+			}
+		  });
+		}
+		
+		// Remove or set data-metatag="false" for all properties
+		removeMetaTagAttributesFromProperties(file: TFile) {
+		  const view = this.app.workspace.getActiveViewOfType(MarkdownView);
+		  if (!view) return;
+
+		  
+		  const elements = view.containerEl.querySelectorAll('.metadata-property-key[data-metatag="true"]');
+		  elements.forEach((el) => {
+			el.removeAttribute('data-metatag'); // Remove attribute
+			// Optionally set to false:
+			// el.setAttribute('data-metatag', 'false');
+		  });
+		}
+
+		extractFrontmatter(content: string): any {
+			const match = content.match(/^---\n([\s\S]*?)\n---/);
+			if (match) {
+			  try {
+				return YAML.parse(match[1]);
+			  } catch (e) {
+				console.error("Failed to parse frontmatter", e);
+				return {};
+			  }
+			}
+			return {};
+		}
+
+		isCurrentFile(file: TFile): boolean {
+			const activeFile = this.app.workspace.getActiveFile();
+			return activeFile?.path === file.path;
+		}
+		  
 }
 
 class MetaTagsSettingTab extends PluginSettingTab {
@@ -420,11 +602,11 @@ class MetaTagsSettingTab extends PluginSettingTab {
 
 		containerEl.empty();
 
-		containerEl.createEl("h2", { text: "MetaTags Settings" });
+		containerEl.createEl("h2", { text: "MetaTags" });
 
 		new Setting(containerEl)
 			.setName("Tag Base")
-			.setDesc("The base tag for MetaTags")
+			.setDesc("The base tag for MetaTags and the folder the templates must be stored in")
 			.addText((text) =>
 				text
 					.setPlaceholder("Enter base tag")
@@ -433,6 +615,19 @@ class MetaTagsSettingTab extends PluginSettingTab {
 						this.plugin.settings.tagBase = value;
 						await this.plugin.saveSettings();
 					})
+			);
+
+		new Setting(containerEl)
+			.setName("Remove Empty Properties")
+			.setDesc("When removing a MetaTag, remove any empty properties associated with the template")
+			.addToggle((toggle) =>
+					toggle
+						.setValue(this.plugin.settings.deleteEmptyProperties)
+						.onChange(async (value) => {
+							this.plugin.settings.deleteEmptyProperties = value;
+							await this.plugin.saveSettings();
+						})
+
 			);
 	}
 }
