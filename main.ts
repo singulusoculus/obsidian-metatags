@@ -14,12 +14,14 @@ import * as YAML from 'yaml';
 
 interface MetaTagsSettings {
 	tagBase: string;
-	deleteEmptyProperties: boolean;
+	deleteEmptyMetatagProperties: boolean;
+	templateFolderPath: string;
 }
 
 const DEFAULT_SETTINGS: MetaTagsSettings = {
 	tagBase: "mt",
-	deleteEmptyProperties: false,
+	deleteEmptyMetatagProperties: false,
+	templateFolderPath: "",
 };
 
 export default class MetaTagsPlugin extends Plugin {
@@ -185,7 +187,7 @@ export default class MetaTagsPlugin extends Plugin {
 					`${this.settings.tagBase}/`,
 					""
 				);
-				if (this.settings.deleteEmptyProperties) {
+				if (this.settings.deleteEmptyMetatagProperties) {
 					await this.removeEmptyTemplateProperties(file, metaTagName);
 				}
 			}
@@ -250,7 +252,6 @@ export default class MetaTagsPlugin extends Plugin {
 			const templateFile = this.app.vault.getAbstractFileByPath(
 				templateFilePath
 			) as TFile;
-
 			if (!templateFile) continue;
 
 			const templateData =
@@ -622,12 +623,27 @@ class MetaTagsSettingTab extends PluginSettingTab {
 			.setDesc("When removing a MetaTag, remove any empty properties associated with the template")
 			.addToggle((toggle) =>
 					toggle
-						.setValue(this.plugin.settings.deleteEmptyProperties)
+						.setValue(this.plugin.settings.deleteEmptyMetatagProperties)
 						.onChange(async (value) => {
-							this.plugin.settings.deleteEmptyProperties = value;
+							this.plugin.settings.deleteEmptyMetatagProperties = value;
 							await this.plugin.saveSettings();
 						})
 
 			);
+
+		new Setting(containerEl)
+            .setName("Template Folder Path")
+            .setDesc(
+                "The folder where your template files are stored. Leave empty to search the entire vault."
+            )
+            .addText((text) =>
+                text
+                    .setPlaceholder("Enter template folder path")
+                    .setValue(this.plugin.settings.templateFolderPath)
+                    .onChange(async (value) => {
+                        this.plugin.settings.templateFolderPath = value.trim();
+                        await this.plugin.saveSettings();
+                    })
+            );
 	}
 }
