@@ -90,20 +90,55 @@ export default class MetaTagsPlugin extends Plugin {
 		}
 	}
 
-	initializeTemplateCache() {
-		const tagBase = this.settings.tagBase;
-		const templateFolder = this.app.vault.getAbstractFileByPath(tagBase);
+	// initializeTemplateCache() {
+	// 	const tagBase = this.settings.tagBase;
+	// 	const templateFolder = this.app.vault.getAbstractFileByPath(tagBase);
 
-		if (templateFolder && templateFolder instanceof TFolder) {
-			const templateFiles = this.getAllTemplateFiles(templateFolder);
-			for (const file of templateFiles) {
-				const frontmatter =
-					this.app.metadataCache.getFileCache(file)?.frontmatter ||
-					{};
-				this.templateCache.set(file.path, frontmatter);
+	// 	if (templateFolder && templateFolder instanceof TFolder) {
+	// 		const templateFiles = this.getAllTemplateFiles(templateFolder);
+	// 		for (const file of templateFiles) {
+	// 			const frontmatter =
+	// 				this.app.metadataCache.getFileCache(file)?.frontmatter ||
+	// 				{};
+	// 			this.templateCache.set(file.path, frontmatter);
+	// 		}
+	// 	}
+	// }
+
+	initializeTemplateCache() {
+		const templateFolderPath = this.settings.templateFolderPath.trim();
+		let templateFiles: TFile[] = [];
+	
+		if (templateFolderPath) {
+			// If templateFolderPath is specified, use it to locate templates
+			const templateFolder = this.app.vault.getAbstractFileByPath(templateFolderPath);
+	
+			if (templateFolder && templateFolder instanceof TFolder) {
+				templateFiles = this.getAllTemplateFiles(templateFolder);
+			} else {
+				console.warn(`Template folder "${templateFolderPath}" not found.`);
+			}
+		} else {
+			// If no templateFolderPath is specified, search all markdown files for templates
+			const allFiles = this.app.vault.getMarkdownFiles();
+			for (const file of allFiles) {
+				const frontmatter = this.app.metadataCache.getFileCache(file)?.frontmatter;
+				if (frontmatter) {
+					const tags = this.getAllTagsFromFrontmatter(frontmatter);
+					if (tags.includes(this.settings.tagBase)) {
+						templateFiles.push(file);
+					}
+				}
 			}
 		}
+	
+		for (const file of templateFiles) {
+			const frontmatter = this.app.metadataCache.getFileCache(file)?.frontmatter || {};
+			this.templateCache.set(file.path, frontmatter);
+		}
 	}
+	
+	
 
 	getAllTemplateFiles(folder: TFolder): TFile[] {
 		let files: TFile[] = [];
@@ -150,15 +185,57 @@ export default class MetaTagsPlugin extends Plugin {
 	}
 
 	async isTemplateFile(file: TFile): Promise<boolean> {
-		const tagBase = this.settings.tagBase;
-		const templatesFolder = this.app.vault.getAbstractFileByPath(tagBase);
-
-		// Check if file.parent and templatesFolder are valid
-		if (!file.parent || !templatesFolder) {
+		const templateFolderPath = this.settings.templateFolderPath.trim();
+	
+		if (templateFolderPath) {
+			// If template folder is specified, check if the file is within that folder
+			const templateFolder = this.app.vault.getAbstractFileByPath(templateFolderPath);
+			if (!templateFolder || !(templateFolder instanceof TFolder)) {
+				return false;
+			}
+			return file.path.startsWith(templateFolder.path);
+		} else {
+			// If no template folder is specified, check if the file has the tagBase in its frontmatter tags
+			const frontmatter = this.app.metadataCache.getFileCache(file)?.frontmatter;
+			if (frontmatter) {
+				const tags = this.getAllTagsFromFrontmatter(frontmatter);
+				return tags.includes(this.settings.tagBase);
+			}
 			return false;
 		}
+	}
+	
 
-		return file.parent.path === templatesFolder.path;
+	async getTemplateFileByName(templateName: string): Promise<TFile | null> {
+		const templateFolderPath = this.settings.templateFolderPath.trim();
+	
+		if (templateFolderPath) {
+			// If template folder is specified, look for the template file there
+			const templateFilePath = `${templateFolderPath}/${templateName}.md`;
+			const templateFile = this.app.vault.getAbstractFileByPath(templateFilePath);
+			if (templateFile instanceof TFile) {
+				return templateFile;
+			} else {
+				console.warn(`Template file "${templateFilePath}" not found.`);
+				return null;
+			}
+		} else {
+			// If no template folder is specified, search all markdown files for the template
+			const allFiles = this.app.vault.getMarkdownFiles();
+			for (const file of allFiles) {
+				if (file.basename === templateName) {
+					const frontmatter = this.app.metadataCache.getFileCache(file)?.frontmatter;
+					if (frontmatter) {
+						const tags = this.getAllTagsFromFrontmatter(frontmatter);
+						if (tags.includes(this.settings.tagBase)) {
+							return file;
+						}
+					}
+				}
+			}
+			console.warn(`Template "${templateName}" not found in the vault.`);
+			return null;
+		}
 	}
 
 	getAddedTags(prevTags: string[], currentTags: string[]): string[] {
@@ -242,34 +319,23 @@ export default class MetaTagsPlugin extends Plugin {
 	}
 
 	async applyTemplateMetadata(file: TFile, metaTagNames: string[]) {
-		const noteData =
-			this.app.metadataCache.getFileCache(file)?.frontmatter || {};
+		const noteData = this.app.metadataCache.getFileCache(file)?.frontmatter || {};
 		let mergedTemplateData = {};
-
+	
 		for (const metaTagName of metaTagNames) {
-			const tagBase = this.settings.tagBase;
-			const templateFilePath = `${tagBase}/${metaTagName}.md`;
-			const templateFile = this.app.vault.getAbstractFileByPath(
-				templateFilePath
-			) as TFile;
+			const templateFile = await this.getTemplateFileByName(metaTagName);
 			if (!templateFile) continue;
-
-			const templateData =
-				this.app.metadataCache.getFileCache(templateFile)
-					?.frontmatter || {};
+	
+			const templateData = this.app.metadataCache.getFileCache(templateFile)?.frontmatter || {};
 			mergedTemplateData = { ...mergedTemplateData, ...templateData };
 		}
-
-		// Remove 'tags' and 'mt' from template data
-		// delete mergedTemplateData['tags'];
-		// delete mergedTemplateData['mt'];
-
+	
 		// Merge with note data, note data takes precedence
 		const mergedData = { ...mergedTemplateData, ...noteData };
-
+	
 		const content = await this.app.vault.read(file);
 		const newContent = this.replaceFrontMatter(content, mergedData);
-
+	
 		await this.app.vault.modify(file, newContent);
 	}
 
@@ -341,35 +407,37 @@ export default class MetaTagsPlugin extends Plugin {
 	}
 
 	async removeEmptyTemplateProperties(file: TFile, metaTagName: string) {
-		const noteData =
-			this.app.metadataCache.getFileCache(file)?.frontmatter || {};
-	
+		const noteData = this.app.metadataCache.getFileCache(file)?.frontmatter || {};
 		const content = await this.app.vault.read(file);
 	
-		// Get the template frontmatter
-		const templateFilePath = `${this.settings.tagBase}/${metaTagName}.md`;
-		const templateFile = this.app.vault.getAbstractFileByPath(templateFilePath) as TFile;
+		const templateFile = await this.getTemplateFileByName(metaTagName);
 		if (!templateFile) return;
 	
 		const templateContent = await this.app.vault.read(templateFile);
 		const templateData = this.extractFrontmatter(templateContent);
 	
-		// Create a copy of the note's frontmatter
 		const newData = { ...noteData };
 	
-		// Iterate over the note's frontmatter properties
 		for (const key in newData) {
-			if ((newData[key] === "" || newData[key] === null) && templateData.hasOwnProperty(key)) {
-				// Remove the property if it's empty and exists in the template
-				delete newData[key];
+			if (templateData.hasOwnProperty(key)) {
+				const noteValue = newData[key];
+				const templateValue = templateData[key];
+	
+				if (noteValue === "" || noteValue === null) {
+					delete newData[key];
+				} else if (typeof templateValue === 'boolean') {
+					if (noteValue === templateValue) {
+						delete newData[key];
+					}
+				}
+				// Optionally handle other data types here
 			}
 		}
 	
 		const newContent = this.replaceFrontMatter(content, newData);
 		await this.app.vault.modify(file, newContent);
 	}
-
-
+	
 	replaceFrontMatter(content: string, newData: any): string {
 		const yamlStart = content.indexOf("---");
 		const yamlEnd = content.indexOf("---", yamlStart + 3);
@@ -447,22 +515,23 @@ export default class MetaTagsPlugin extends Plugin {
 
 	getAllTagsFromFrontmatter(frontmatter: any): string[] {
 		if (!frontmatter || !frontmatter.tags) return [];
-
+	
 		let tags: string[] = [];
-
+	
 		if (typeof frontmatter.tags === "string") {
 			tags.push(frontmatter.tags);
 		} else if (Array.isArray(frontmatter.tags)) {
 			tags = frontmatter.tags;
 		}
-
+	
 		// Remove '#' from tags if present
 		tags = tags.map((tag) =>
 			tag.startsWith("#") ? tag.substring(1) : tag
 		);
-
+	
 		return tags;
 	}
+	
 
 	refreshFileView(file: TFile) {
 		const leaves = this.app.workspace.getLeavesOfType("markdown");
@@ -495,37 +564,41 @@ export default class MetaTagsPlugin extends Plugin {
 		// Apply attributes to properties in the note
 		this.addMetaTagAttributesToProperties(file, templateProperties);
 	  }
-	  
-	  
-	  async updateMetaTagAttributes(file: TAbstractFile) {
-		  if (!(file instanceof TFile)) return; // Check if file is a TFile
 
-		  if(!this.isCurrentFile(file)) return; // Check if file is current file
-
-		  const isTemplate = await this.isTemplateFile(file);
-
-		  if (isTemplate) {
+	async updateMetaTagAttributes(file: TAbstractFile) {
+		if (!(file instanceof TFile)) return;
+		if (!this.isCurrentFile(file)) return;
+	
+		const isTemplate = await this.isTemplateFile(file);
+	
+		if (isTemplate) {
 			this.addMetaTagAttributesToTemplate(file);
 			return;
-		  }
-		
-		  const metadata = this.app.metadataCache.getFileCache(file);
-		  const tags = metadata?.frontmatter?.tags;
-		
-		  if (!tags) return;
-		
-		  const metaTag = tags.find((tag: any) => tag.startsWith(`${this.settings.tagBase}/`));
-		  const templateName = metaTag?.split('/')[1];
-		  const templateFile = this.app.vault.getAbstractFileByPath(`${this.settings.tagBase}/${templateName}.md`);
-		  
-		  if (templateFile && metaTag && templateFile instanceof TFile) { // Check if templateFile is a TFile
-			const templateContent = await this.app.vault.read(templateFile);
-			const templateProperties = this.extractFrontmatter(templateContent);
-			this.addMetaTagAttributesToProperties(file, templateProperties);
-		  } else {
-			this.removeMetaTagAttributesFromProperties(file);
-		  }
 		}
+	
+		const metadata = this.app.metadataCache.getFileCache(file);
+		const tags = metadata?.frontmatter?.tags;
+	
+		if (!tags) return;
+	
+		const metaTag = tags.find((tag: any) =>
+			tag.startsWith(`${this.settings.tagBase}/`)
+		);
+		const templateName = metaTag?.split('/')[1];
+	
+		if (templateName) {
+			const templateFile = await this.getTemplateFileByName(templateName);
+			if (templateFile) {
+				const templateContent = await this.app.vault.read(templateFile);
+				const templateProperties = this.extractFrontmatter(templateContent);
+				this.addMetaTagAttributesToProperties(file, templateProperties);
+			} else {
+				this.removeMetaTagAttributesFromProperties(file);
+			}
+		} else {
+			this.removeMetaTagAttributesFromProperties(file);
+		}
+	}
 
 		addMetaTagAttributesToTemplate(file: TFile) {
 			const view = this.app.workspace.getActiveViewOfType(MarkdownView);
@@ -607,7 +680,7 @@ class MetaTagsSettingTab extends PluginSettingTab {
 
 		new Setting(containerEl)
 			.setName("Tag Base")
-			.setDesc("The base tag for MetaTags and the folder the templates must be stored in")
+			.setDesc("The base tag for MetaTags")
 			.addText((text) =>
 				text
 					.setPlaceholder("Enter base tag")
@@ -634,7 +707,7 @@ class MetaTagsSettingTab extends PluginSettingTab {
 		new Setting(containerEl)
             .setName("Template Folder Path")
             .setDesc(
-                "The folder where your template files are stored. Leave empty to search the entire vault."
+                "The folder where your template files are stored. Leave empty for templates to exist anywhere in your vault."
             )
             .addText((text) =>
                 text
