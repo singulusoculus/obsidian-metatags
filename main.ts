@@ -39,6 +39,8 @@ export default class MetaTagsPlugin extends Plugin {
 			this.initializeTemplateCache();
 		});
 
+		console.log(this.fileTagCache);
+
 		// Debounce to prevent rapid successive calls
 		const handleMetadataChange = debounce(
 			async (file: TFile) => await this.onMetadataChanged(file),
@@ -89,21 +91,6 @@ export default class MetaTagsPlugin extends Plugin {
 			this.fileTagCache.set(file.path, tags);
 		}
 	}
-
-	// initializeTemplateCache() {
-	// 	const tagBase = this.settings.tagBase;
-	// 	const templateFolder = this.app.vault.getAbstractFileByPath(tagBase);
-
-	// 	if (templateFolder && templateFolder instanceof TFolder) {
-	// 		const templateFiles = this.getAllTemplateFiles(templateFolder);
-	// 		for (const file of templateFiles) {
-	// 			const frontmatter =
-	// 				this.app.metadataCache.getFileCache(file)?.frontmatter ||
-	// 				{};
-	// 			this.templateCache.set(file.path, frontmatter);
-	// 		}
-	// 	}
-	// }
 
 	initializeTemplateCache() {
 		const templateFolderPath = this.settings.templateFolderPath.trim();
